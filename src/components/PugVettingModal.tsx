@@ -32,7 +32,7 @@ const METRIC_CARDS: MetricCard[] = [
   },
   {
     key: 'cc',
-    label: 'Crowd Control',
+    label: 'CC & Utility',
     sublabel: 'Phase 3 — spell filter',
     icon: '🔒',
     accentClass: 'text-purple-400',
@@ -40,8 +40,8 @@ const METRIC_CARDS: MetricCard[] = [
   },
   {
     key: 'avoidableDamageTaken',
-    label: 'Damage Taken',
-    sublabel: 'Total across the run',
+    label: 'Avoidable Damage',
+    sublabel: 'Damage from failed mechanics',
     icon: '⚠️',
     accentClass: 'text-orange-400',
     glowClass: 'shadow-orange-500/20',

@@ -771,11 +771,14 @@ export async function fetchRunMetrics(
     return { success: false, reason: 'no_log_found' };
   }
 
+  const startTime = Math.floor(fightWindow.startTime) - 10;
+  const endTime = Math.floor(fightWindow.endTime) + 10;
+
   const tables = await gqlQuery<ReportTablesResult>(token, REPORT_TABLES_QUERY, {
     code: matched.reportCode,
     fightID: matched.fightID,
-    startTime: fightWindow.startTime,
-    endTime: fightWindow.endTime,
+    startTime,
+    endTime,
   });
 
   const report = tables.reportData?.report;
