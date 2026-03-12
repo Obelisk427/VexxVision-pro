@@ -8,7 +8,7 @@ interface RaidPerformancePanelProps {
   tier: TierSelection;
 }
 
-type Difficulty = 'mythic' | 'heroic';
+type Difficulty = 'normal' | 'heroic' | 'mythic';
 
 function getRankBadgeClass(percent: number | null): string {
   if (percent == null) return 'bg-white/5 text-slate-600';
@@ -69,9 +69,14 @@ export function RaidPerformancePanel({ state, tier }: RaidPerformancePanelProps)
     );
   }
 
-  const { zone, bosses, characterName } = tierData;
+  const { zone, bosses, characterName, characterRegion, characterServerSlug } = tierData;
   const killedBosses = bosses.filter((b) => (b[difficulty].kills ?? 0) > 0);
   const progress = `${killedBosses.length}/${bosses.length}`;
+  const difficultyNum: Record<Difficulty, number> = { normal: 3, heroic: 4, mythic: 5 };
+
+  const bossUrl = (encounterId: number) =>
+    `https://www.warcraftlogs.com/character/${characterRegion}/${characterServerSlug}/${characterName.toLowerCase()}` +
+    `#zone=${zone.id}&boss=${encounterId}&difficulty=${difficultyNum[difficulty]}`;
 
   return (
     <div className="rounded-xl border border-white/5 bg-bg-card p-6 space-y-5 flex flex-col">
@@ -93,7 +98,7 @@ export function RaidPerformancePanel({ state, tier }: RaidPerformancePanelProps)
 
       {/* ── Difficulty Tabs ─────────────────────────────────────────── */}
       <div className="flex gap-1 bg-bg-primary/60 rounded-lg p-1 w-fit border border-white/5">
-        {(['mythic', 'heroic'] as Difficulty[]).map((d) => (
+        {(['normal', 'heroic', 'mythic'] as Difficulty[]).map((d) => (
           <button
             key={d}
             id={`raid-tab-${d}`}
@@ -134,15 +139,36 @@ export function RaidPerformancePanel({ state, tier }: RaidPerformancePanelProps)
                   }`}
                 >
                   <td className="py-2.5 pl-1 text-slate-700 text-xs tabular-nums">{idx + 1}</td>
-                  <td className="py-2.5 text-slate-200 font-medium">{boss.encounterName}</td>
+                  <td className="py-2.5 text-slate-200 font-medium">
+                    <a
+                      href={bossUrl(boss.encounterId)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-accent-teal hover:underline underline-offset-2 transition-colors"
+                    >
+                      {boss.encounterName}
+                    </a>
+                  </td>
                   <td className="py-2.5 text-center">
                     {d.rankPercent != null ? (
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${getRankBadgeClass(d.rankPercent)}`}
-                        title={getRankTierLabel(d.rankPercent)}
-                      >
-                        {d.rankPercent.toFixed(1)}%
-                      </span>
+                      d.reportCode ? (
+                        <a
+                          href={`https://www.warcraftlogs.com/reports/${d.reportCode}#fight=${d.reportFightID ?? 'last'}&type=damage-done`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={`${getRankTierLabel(d.rankPercent)} — open in Warcraft Logs`}
+                          className={`inline-block px-2 py-0.5 rounded text-xs font-bold ring-1 ring-transparent hover:ring-accent-teal/60 hover:brightness-125 transition-all ${getRankBadgeClass(d.rankPercent)}`}
+                        >
+                          {d.rankPercent.toFixed(1)}%
+                        </a>
+                      ) : (
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${getRankBadgeClass(d.rankPercent)}`}
+                          title={getRankTierLabel(d.rankPercent)}
+                        >
+                          {d.rankPercent.toFixed(1)}%
+                        </span>
+                      )
                     ) : (
                       <span className="text-slate-700 text-xs">—</span>
                     )}
@@ -155,7 +181,18 @@ export function RaidPerformancePanel({ state, tier }: RaidPerformancePanelProps)
                     )}
                   </td>
                   <td className="py-2.5 pr-1 text-right text-slate-600 text-xs tabular-nums">
-                    {formatKillTime(d.fastestKill)}
+                    {d.fastestKill && d.reportCode ? (
+                      <a
+                        href={`https://www.warcraftlogs.com/reports/${d.reportCode}#fight=${d.reportFightID ?? 'last'}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hover:text-accent-teal hover:underline transition-colors"
+                      >
+                        {formatKillTime(d.fastestKill)}
+                      </a>
+                    ) : (
+                      formatKillTime(d.fastestKill)
+                    )}
                   </td>
                 </tr>
               );

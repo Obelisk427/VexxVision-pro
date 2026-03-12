@@ -42,6 +42,8 @@ export interface RaiderIOBestRun {
   par_time_ms: number;
   num_keystone_upgrades: number;
   score: number;
+  /** Direct Raider.io URL to this specific run page. */
+  url?: string;
   affixes: Array<{
     id: number;
     name: string;
@@ -102,9 +104,15 @@ export interface WCLBossRanking {
   bestAmount: number;
   fastestKill: number;
   spec: string;
-  kills: { count: number } | null;
+  /** Flat kill count returned by WCL zoneRankings (not nested as kills.count) */
+  totalKills: number | null;
   difficulty: number;
   partition: number;
+  /** Report link data — present when zone data is available. */
+  report?: {
+    code: string;
+    fightID: number;
+  } | null;
 }
 
 export interface WCLZoneRankings {
@@ -121,25 +129,30 @@ export interface WCLZoneRankings {
   rankings: WCLBossRanking[] | null;
 }
 
+/** Per-difficulty boss data including optional report link for clickable parses. */
+export interface BossRankData {
+  rankPercent: number | null;
+  kills: number | null;
+  spec: string | null;
+  fastestKill: number | null;
+  reportCode: string | null;
+  reportFightID: number | null;
+}
+
 export interface ProcessedBossData {
   encounterId: number;
   encounterName: string;
-  mythic: {
-    rankPercent: number | null;
-    kills: number | null;
-    spec: string | null;
-    fastestKill: number | null;
-  };
-  heroic: {
-    rankPercent: number | null;
-    kills: number | null;
-    spec: string | null;
-    fastestKill: number | null;
-  };
+  normal: BossRankData;
+  heroic: BossRankData;
+  mythic: BossRankData;
 }
 
 export interface WCLRaidData {
   characterName: string;
+  /** lowercase region code, e.g. "us" */
+  characterRegion: string;
+  /** WCL server slug, e.g. "illidan", "area-52" */
+  characterServerSlug: string;
   zone: WCLZone;
   bosses: ProcessedBossData[];
 }
@@ -148,4 +161,16 @@ export interface WCLRaidData {
 export interface WCLBothTiersData {
   current: WCLRaidData;
   previous: WCLRaidData | null;
+}
+
+/** Live per-run behaviour metrics fetched from WCL event tables. */
+export interface PugVettingMetrics {
+  /** Total successful interrupts by this character in the run. */
+  interrupts: number | null;
+  /** Placeholder — requires event-log spell filtering (Phase 3). */
+  cc: number | null;
+  /** Total damage taken from all sources (proxy for avoidable damage). */
+  avoidableDamageTaken: number | null;
+  /** Total deaths for this character in the run. */
+  deaths: number | null;
 }

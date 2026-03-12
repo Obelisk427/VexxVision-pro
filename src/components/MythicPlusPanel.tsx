@@ -1,5 +1,7 @@
-import type { PanelState, RaiderIOData, TierSelection } from '../types';
+import { useState } from 'react';
+import type { PanelState, RaiderIOBestRun, RaiderIOData, TierSelection } from '../types';
 import { LoadingCard } from './LoadingCard';
+import { PugVettingModal } from './PugVettingModal';
 
 interface MythicPlusPanelProps {
   state: PanelState<RaiderIOData>;
@@ -26,6 +28,7 @@ function upgradeLabel(n: number): string {
 }
 
 export function MythicPlusPanel({ state, tier }: MythicPlusPanelProps) {
+  const [selectedRun, setSelectedRun] = useState<RaiderIOBestRun | null>(null);
   if (state.loading) return <LoadingCard />;
 
   if (state.error) {
@@ -119,15 +122,36 @@ export function MythicPlusPanel({ state, tier }: MythicPlusPanelProps) {
                 <th className="text-center pb-2.5 font-medium">Upgrades</th>
                 <th className="text-center pb-2.5 font-medium">Score</th>
                 <th className="text-right pb-2.5 pr-1 font-medium">Time</th>
+                <th className="text-right pb-2.5 pr-1 font-medium">Analyze</th>
               </tr>
             </thead>
             <tbody>
-              {runs.map((run, i) => (
+              {runs.map((run, i) => {
+                console.log('Raw Run Data:', run);
+                // Raider.io incorrectly tags TWW S3 historical runs with season-mn-1
+                // in their native url field during the expansion transition window.
+                const fixedUrl = run.url
+                  ? run.url.replace('season-mn-1', 'season-tww-3')
+                  : null;
+                return (
                 <tr
                   key={i}
                   className="border-t border-white/[0.04] hover:bg-white/[0.02] transition-colors"
                 >
-                  <td className="py-2.5 pl-1 text-slate-200 font-medium">{run.dungeon ?? '—'}</td>
+                  <td className="py-2.5 pl-1 text-slate-200 font-medium">
+                    {fixedUrl ? (
+                      <a
+                        href={fixedUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hover:text-accent-teal hover:underline underline-offset-2 transition-colors"
+                      >
+                        {run.dungeon ?? '—'}
+                      </a>
+                    ) : (
+                      run.dungeon ?? '—'
+                    )}
+                  </td>
                   <td className="py-2.5 text-center">
                     <span className="px-1.5 py-0.5 rounded bg-accent-violet/10 text-accent-violet font-bold text-xs">
                       +{run.mythic_level ?? '—'}
@@ -144,11 +168,38 @@ export function MythicPlusPanel({ state, tier }: MythicPlusPanelProps) {
                   <td className="py-2.5 pr-1 text-right text-slate-500 text-xs tabular-nums">
                     {run.clear_time_ms != null ? formatClearTime(run.clear_time_ms) : '—'}
                   </td>
+                  <td className="py-2 pr-1 text-right">
+                    <button
+                      id={`analyze-run-${i}`}
+                      onClick={() => setSelectedRun(run)}
+                      aria-label={`Analyze ${run.dungeon} +${run.mythic_level}`}
+                      title="PUG Vetting Report"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-slate-500 border border-white/5 bg-white/[0.03] hover:text-accent-teal hover:border-accent-teal/40 hover:bg-accent-teal/5 hover:shadow-[0_0_10px_rgba(20,184,166,0.15)] transition-all"
+                    >
+                      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="11" cy="11" r="8" />
+                        <path d="m21 21-4.35-4.35" />
+                      </svg>
+                      Scan
+                    </button>
+                  </td>
                 </tr>
-              ))}
+              ); })}
+
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* ── PUG Vetting Modal ──────────────────────────────────────────── */}
+      {selectedRun && (
+        <PugVettingModal
+          run={selectedRun}
+          characterName={profile.name}
+          realm={profile.realm}
+          region={profile.region as import('../types').Region}
+          onClose={() => setSelectedRun(null)}
+        />
       )}
     </div>
   );
