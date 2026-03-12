@@ -167,10 +167,25 @@ export interface WCLBothTiersData {
 export interface PugVettingMetrics {
   /** Total successful interrupts by this character in the run. */
   interrupts: number | null;
-  /** Placeholder — requires event-log spell filtering (Phase 3). */
+  /** Crowd-control casts identified from the Casts table. */
   cc: number | null;
   /** Total damage taken from all sources (proxy for avoidable damage). */
   avoidableDamageTaken: number | null;
   /** Total deaths for this character in the run. */
   deaths: number | null;
 }
+
+export type PugVettingFailureReason = 'no_log_found';
+
+export type PugVettingResult =
+  | {
+      success: true;
+      metrics: PugVettingMetrics;
+      reportCode: string;
+      fightID: number;
+      matchedDungeon: string;
+    }
+  | {
+      success: false;
+      reason: PugVettingFailureReason;
+    };

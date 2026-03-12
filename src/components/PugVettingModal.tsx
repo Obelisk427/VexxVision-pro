@@ -83,15 +83,27 @@ export function PugVettingModal({
   const [metrics, setMetrics] = useState<PugVettingMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [noLogFound, setNoLogFound] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setMetrics(null);
+    setNoLogFound(false);
 
     fetchRunMetrics(characterName, realm, region, run)
-      .then((m) => { if (!cancelled) { setMetrics(m); setLoading(false); } })
+      .then((result) => {
+        if (cancelled) return;
+        if (!result.success) {
+          setNoLogFound(result.reason === 'no_log_found');
+          setLoading(false);
+          return;
+        }
+
+        setMetrics(result.metrics);
+        setLoading(false);
+      })
       .catch((e: unknown) => {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : 'Unknown error');
@@ -106,7 +118,7 @@ export function PugVettingModal({
     if (loading)  return null;  // render skeleton
     if (!metrics) return '---';
     const raw = metrics[card.key];
-    if (raw === null) return null; // Phase 3 placeholder
+    if (raw === null) return '---';
     return card.format ? card.format(raw) : raw.toString();
   };
 
@@ -138,7 +150,7 @@ export function PugVettingModal({
                 PUG Vetting Report
               </h2>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-widest bg-teal-500/10 text-teal-400 border border-teal-500/20">
-                {loading ? 'Fetching…' : error ? 'Error' : 'Live Data'}
+                {loading ? 'Fetching…' : error ? 'Error' : noLogFound ? 'No Log' : 'Live Data'}
               </span>
             </div>
             <p className="text-slate-500 text-xs">
@@ -189,38 +201,45 @@ export function PugVettingModal({
           </div>
         )}
 
-        {/* ── Metric cards ────────────────────────────────────────────── */}
-        <div className="grid grid-cols-2 gap-3 p-6">
-          {METRIC_CARDS.map((card) => {
-            const value = displayValue(card);
-            const isPhase3 = !loading && metrics !== null && metrics[card.key] === null;
-
-            return (
-              <div
-                key={card.key}
-                className={`relative flex flex-col items-center gap-3 rounded-xl border border-white/5 bg-white/[0.03] px-4 py-5 text-center shadow-lg ${card.glowClass} overflow-hidden`}
-              >
-                <div className="absolute top-0 right-0 w-16 h-16 bg-white/[0.015] rounded-bl-full" />
-                <span className="text-2xl leading-none">{card.icon}</span>
-
-                <div className={`text-3xl font-black tracking-tight tabular-nums ${card.accentClass}`}>
-                  {loading ? (
-                    <MetricSkeleton />
-                  ) : isPhase3 ? (
-                    <span className="text-lg text-slate-600">Soon™</span>
-                  ) : (
-                    value ?? '---'
-                  )}
-                </div>
-
-                <div className="space-y-0.5">
-                  <div className="text-xs font-semibold text-slate-300">{card.label}</div>
-                  <div className="text-[10px] text-slate-600">{card.sublabel}</div>
-                </div>
+        {/* ── Metric cards / empty state ─────────────────────────────── */}
+        {noLogFound ? (
+          <div className="p-6">
+            <div className="rounded-2xl border border-white/8 bg-gradient-to-br from-white/[0.04] to-white/[0.02] px-6 py-10 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-2xl">
+                📭
               </div>
-            );
-          })}
-        </div>
+              <h3 className="text-base font-semibold text-white">No Combat Log Found</h3>
+              <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-400">
+                This Mythic+ run was not recorded and uploaded to Warcraft Logs.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 p-6">
+            {METRIC_CARDS.map((card) => {
+              const value = displayValue(card);
+
+              return (
+                <div
+                  key={card.key}
+                  className={`relative flex flex-col items-center gap-3 rounded-xl border border-white/5 bg-white/[0.03] px-4 py-5 text-center shadow-lg ${card.glowClass} overflow-hidden`}
+                >
+                  <div className="absolute top-0 right-0 w-16 h-16 bg-white/[0.015] rounded-bl-full" />
+                  <span className="text-2xl leading-none">{card.icon}</span>
+
+                  <div className={`text-3xl font-black tracking-tight tabular-nums ${card.accentClass}`}>
+                    {loading ? <MetricSkeleton /> : value ?? '---'}
+                  </div>
+
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-semibold text-slate-300">{card.label}</div>
+                    <div className="text-[10px] text-slate-600">{card.sublabel}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* ── Footer notice ───────────────────────────────────────────── */}
         {!error && (
@@ -230,7 +249,9 @@ export function PugVettingModal({
               <p className="text-slate-600 text-xs">
                 {loading
                   ? 'Querying Warcraft Logs…'
-                  : 'Metrics are fetched from the best-logged run matching this dungeon on Warcraft Logs.'}
+                  : noLogFound
+                    ? 'No uploaded Warcraft Logs report could be matched to this Raider.io run.'
+                    : 'Metrics are fetched from the best-logged run matching this dungeon on Warcraft Logs.'}
               </p>
             </div>
           </div>

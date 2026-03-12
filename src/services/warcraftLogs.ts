@@ -7,6 +7,7 @@ import type {
   BossRankData,
   ProcessedBossData,
   PugVettingMetrics,
+  PugVettingResult,
   RaiderIOBestRun,
 } from '../types';
 
@@ -349,9 +350,11 @@ export async function fetchWCLData(
  * with an `entries` array of per-player aggregates.
  */
 interface WCLTableEntry {
-  name: string;
-  id: number;
-  total: number;
+  name?: string;
+  id?: number;
+  total?: number;
+  guid?: number;
+  entries?: WCLTableEntry[];
 }
 interface WCLTableScalar {
   data?: { entries?: WCLTableEntry[] };
@@ -361,13 +364,7 @@ interface CharMPlusResult {
   characterData: {
     character: {
       name: string;
-      mPlusRankings: {
-        rankings: Array<{
-          encounter: { id: number; name: string };
-          report: { code: string; fightID: number } | null;
-          totalKills: number | null;
-        }> | null;
-      } | null;
+      [key: string]: WCLZoneRankings | string | null;
     } | null;
   };
 }
@@ -378,6 +375,19 @@ interface ReportTablesResult {
       interrupts:   WCLTableScalar;
       deaths:       WCLTableScalar;
       damageTaken:  WCLTableScalar;
+      casts:        WCLTableScalar;
+    } | null;
+  };
+}
+
+interface ReportFightWindowResult {
+  reportData: {
+    report: {
+      fights: Array<{
+        id: number;
+        startTime: number;
+        endTime: number;
+      }> | null;
     } | null;
   };
 }
@@ -389,96 +399,298 @@ interface ReportTablesResult {
  * Uses the same encounter data already fetched by ZONE_DISCOVERY_QUERY —
  * no extra API call needed.
  */
-async function findMPlusZoneForDungeon(
+interface MPlusZoneCandidate {
+  zoneID: number;
+  zoneName: string;
+  matchedEncounterName: string;
+  nameScore: number;
+}
+
+function normalize(s: string): string {
+  return s.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function stripLeadingArticles(s: string): string {
+  return s.replace(/^(the|a|an)\s+/, '');
+}
+
+function buildDungeonAliases(run: RaiderIOBestRun): string[] {
+  const rawNames = [run.dungeon, run.short_name].filter(Boolean) as string[];
+  const aliases = new Set<string>();
+
+  for (const raw of rawNames) {
+    const normalized = normalize(raw);
+    if (!normalized) continue;
+    aliases.add(normalized);
+    aliases.add(stripLeadingArticles(normalized));
+
+    const colonParts = normalized.split(':').map((part) => part.trim()).filter(Boolean);
+    for (const part of colonParts) {
+      aliases.add(part);
+      aliases.add(stripLeadingArticles(part));
+    }
+
+    const ofParts = normalized.split(/\bof\b/).map((part) => part.trim()).filter(Boolean);
+    for (const part of ofParts) {
+      aliases.add(part);
+      aliases.add(stripLeadingArticles(part));
+    }
+  }
+
+  return Array.from(aliases).filter(Boolean);
+}
+
+function dungeonNameScore(aliases: string[], candidateName: string): number {
+  const candidate = stripLeadingArticles(normalize(candidateName));
+  let best = 0;
+
+  for (const alias of aliases) {
+    if (!alias) continue;
+    if (candidate === alias) return 100;
+    if (candidate.includes(alias) || alias.includes(candidate)) {
+      best = Math.max(best, 85 - Math.abs(candidate.length - alias.length));
+      continue;
+    }
+
+    const aliasTokens = new Set(alias.split(' ').filter(Boolean));
+    const candidateTokens = new Set(candidate.split(' ').filter(Boolean));
+    const overlap = [...aliasTokens].filter((token) => candidateTokens.has(token)).length;
+    const tokenScore = overlap * 10;
+    best = Math.max(best, tokenScore);
+  }
+
+  return best;
+}
+
+async function findMPlusZonesForDungeon(
   token: string,
-  dungeonName: string,
-): Promise<number | null> {
+  run: RaiderIOBestRun,
+): Promise<MPlusZoneCandidate[]> {
   const data = await gqlQuery<ZoneQueryResult>(token, ZONE_DISCOVERY_QUERY);
   const allZones = (data.worldData?.expansions ?? []).flatMap((e) => e.zones);
+  const aliases = buildDungeonAliases(run);
 
-  // All M+ season zones (any zone whose name contains "season" or "mythic+" and has 6+ encounters)
   const mPlusZones = allZones
     .filter((z) => {
       const lower = z.name.toLowerCase();
       return (lower.includes('season') || lower.includes('mythic+')) && z.encounters.length >= 6;
     })
-    .sort((a, b) => b.id - a.id); // newest first
+    .sort((a, b) => b.id - a.id);
 
   if (!mPlusZones.length) {
-    console.warn(
-      '[PUG Vetting] No M+ zones found at all. All WCL zones:',
-      allZones.map((z) => `[${z.id}] "${z.name}" (${z.encounters.length} enc)`),
-    );
-    return null;
+    return [];
   }
 
-  console.log(
-    '[PUG Vetting] M+ zone candidates (newest first):',
-    mPlusZones.map((z) => `[${z.id}] "${z.name}" (${z.encounters.length} enc)`),
-  );
-
-  const targetNorm = normalize(dungeonName);
-
+  const candidates: MPlusZoneCandidate[] = [];
   for (const zone of mPlusZones) {
-    const hit = zone.encounters.find((enc) => {
-      const encNorm = normalize(enc.name);
-      return encNorm === targetNorm || encNorm.includes(targetNorm) || targetNorm.includes(encNorm);
-    });
-    if (hit) {
-      console.log(
-        `[PUG Vetting] Dungeon "${dungeonName}" found in zone [${zone.id}] "${zone.name}"` +
-        ` (encounter: "${hit.name}")`,
-      );
-      return zone.id;
+    const bestEncounter = zone.encounters
+      .map((enc) => ({
+        enc,
+        score: dungeonNameScore(aliases, enc.name),
+      }))
+      .sort((a, b) => b.score - a.score)[0];
+
+    if (bestEncounter && bestEncounter.score >= 20) {
+      candidates.push({
+        zoneID: zone.id,
+        zoneName: zone.name,
+        matchedEncounterName: bestEncounter.enc.name,
+        nameScore: bestEncounter.score,
+      });
     }
   }
 
-  console.warn(
-    `[PUG Vetting] Could not find dungeon "${dungeonName}" in any M+ zone encounter list.`,
-    mPlusZones.flatMap((z) => z.encounters.map((e) => e.name)),
+  return candidates.sort((a, b) => b.nameScore - a.nameScore || b.zoneID - a.zoneID).slice(0, 4);
+}
+
+function buildMPlusCharacterQuery(candidates: MPlusZoneCandidate[]): string {
+  const partitions = [1, 2, 3];
+  const rankingFields = candidates.flatMap((candidate, candidateIndex) =>
+    partitions.map(
+      (partition) =>
+        `z${candidateIndex}p${partition}: zoneRankings(zoneID: ${candidate.zoneID}, partition: ${partition})`,
+    ),
   );
-  return null;
+
+  return /* GraphQL */ `
+    query(
+      $name: String!
+      $serverSlug: String!
+      $serverRegion: String!
+    ) {
+      characterData {
+        character(
+          name: $name
+          serverSlug: $serverSlug
+          serverRegion: $serverRegion
+        ) {
+          name
+          ${rankingFields.join('\n          ')}
+        }
+      }
+    }
+  `;
 }
 
-/**
- * Strips punctuation, collapses whitespace, lowercases — so
- * "Tazavesh: Streets of Wonder" ≡ "tazavesh streets of wonder".
- */
-function normalize(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
-}
-
-const MPLUS_CHAR_QUERY = /* GraphQL */ `
-  query(
-    $name: String!
-    $serverSlug: String!
-    $serverRegion: String!
-    $zoneID: Int!
-  ) {
-    characterData {
-      character(
-        name: $name
-        serverSlug: $serverSlug
-        serverRegion: $serverRegion
-      ) {
-        name
-        mPlusRankings: zoneRankings(zoneID: $zoneID)
+const REPORT_TABLES_QUERY = /* GraphQL */ `
+  query($code: String!, $fightID: Int!, $startTime: Float!, $endTime: Float!) {
+    reportData {
+      report(code: $code) {
+        interrupts: table(
+          fightIDs: [$fightID]
+          startTime: $startTime
+          endTime: $endTime
+          dataType: Interrupts
+        )
+        deaths: table(
+          fightIDs: [$fightID]
+          startTime: $startTime
+          endTime: $endTime
+          dataType: Deaths
+        )
+        damageTaken: table(
+          fightIDs: [$fightID]
+          startTime: $startTime
+          endTime: $endTime
+          dataType: DamageTaken
+          filterExpression: "ability.id != 1"
+        )
+        casts: table(
+          fightIDs: [$fightID]
+          startTime: $startTime
+          endTime: $endTime
+          dataType: Casts
+        )
       }
     }
   }
 `;
 
-const REPORT_TABLES_QUERY = /* GraphQL */ `
+const REPORT_FIGHT_WINDOW_QUERY = /* GraphQL */ `
   query($code: String!, $fightID: Int!) {
     reportData {
       report(code: $code) {
-        interrupts:  table(fightIDs: [$fightID], dataType: Interrupts)
-        deaths:      table(fightIDs: [$fightID], dataType: Deaths)
-        damageTaken: table(fightIDs: [$fightID], dataType: DamageTaken)
+        fights(fightIDs: [$fightID]) {
+          id
+          startTime
+          endTime
+        }
       }
     }
   }
 `;
+
+interface MPlusRankingCandidate {
+  encounterName: string;
+  reportCode: string;
+  fightID: number;
+  zoneID: number;
+  zoneName: string;
+  partition: number;
+  totalKills: number;
+  nameScore: number;
+}
+
+const CC_SPELL_KEYWORDS = [
+  'stun',
+  'fear',
+  'blind',
+  'incapac',
+  'paralysis',
+  'bash',
+  'sweep',
+  'freeze',
+  'trap',
+  'hibernate',
+  'polymorph',
+  'repentance',
+  'imprison',
+  'sap',
+  'sleep walk',
+  'silence',
+  'beam',
+  'nova',
+  'shockwave',
+  'disorient',
+  'hex',
+];
+
+function flattenEntries(entries: WCLTableEntry[]): WCLTableEntry[] {
+  return entries.flatMap((entry) => [entry, ...flattenEntries(entry.entries ?? [])]);
+}
+
+function findCharacterEntry(table: WCLTableScalar, characterName: string): WCLTableEntry | undefined {
+  const target = characterName.toLowerCase();
+  return flattenEntries(table.data?.entries ?? []).find(
+    (entry) => entry.name?.toLowerCase() === target,
+  );
+}
+
+function sumTotals(entries: WCLTableEntry[]): number {
+  return entries.reduce(
+    (sum, entry) => sum + (entry.total ?? 0) + sumTotals(entry.entries ?? []),
+    0,
+  );
+}
+
+function extractCrowdControlTotal(table: WCLTableScalar, characterName: string): number | null {
+  const characterEntry = findCharacterEntry(table, characterName);
+  if (!characterEntry) return null;
+
+  const spellEntries = flattenEntries(characterEntry.entries ?? []);
+  if (!spellEntries.length) return characterEntry.total ?? null;
+
+  const matchingEntries = spellEntries.filter((entry) => {
+    const name = normalize(entry.name ?? '');
+    return CC_SPELL_KEYWORDS.some((keyword) => name.includes(keyword));
+  });
+
+  if (!matchingEntries.length) return 0;
+  return sumTotals(matchingEntries);
+}
+
+function extractTableTotal(table: WCLTableScalar, characterName: string): number {
+  return findCharacterEntry(table, characterName)?.total ?? 0;
+}
+
+async function fetchFightWindow(
+  token: string,
+  code: string,
+  fightID: number,
+): Promise<{ startTime: number; endTime: number } | null> {
+  const data = await gqlQuery<ReportFightWindowResult>(token, REPORT_FIGHT_WINDOW_QUERY, {
+    code,
+    fightID,
+  });
+
+  const fight = data.reportData?.report?.fights?.find((entry) => entry.id === fightID)
+    ?? data.reportData?.report?.fights?.[0];
+
+  if (!fight || fight.startTime == null || fight.endTime == null) {
+    return null;
+  }
+
+  return {
+    startTime: fight.startTime,
+    endTime: fight.endTime,
+  };
+}
+
+function pickBestRankingCandidate(
+  rankings: MPlusRankingCandidate[],
+  run: RaiderIOBestRun,
+): MPlusRankingCandidate | null {
+  if (!rankings.length) return null;
+
+  const aliases = buildDungeonAliases(run);
+
+  return rankings
+    .sort((a, b) => {
+      const aScore = a.nameScore + (aliases.some((alias) => normalize(a.encounterName).includes(alias)) ? 20 : 0);
+      const bScore = b.nameScore + (aliases.some((alias) => normalize(b.encounterName).includes(alias)) ? 20 : 0);
+      return bScore - aScore || b.totalKills - a.totalKills || a.partition - b.partition;
+    })[0];
+}
 
 /**
  * Two-step PUG Vetting fetch:
@@ -495,28 +707,23 @@ export async function fetchRunMetrics(
   realm: string,
   region: Region,
   run: RaiderIOBestRun,
-): Promise<PugVettingMetrics> {
+): Promise<PugVettingResult> {
   const token = await fetchWCLToken();
   const serverSlug = realm.trim().toLowerCase().replace(/'/g, '').replace(/\s+/g, '-');
   const serverRegion = region.toUpperCase();
 
   // ── Step A ──────────────────────────────────────────────────────────────────
-  const zoneID = await findMPlusZoneForDungeon(token, run.dungeon);
-
-  if (!zoneID) {
-    throw new Error(
-      'Could not identify the current M+ season zone on Warcraft Logs. ' +
-      'Zone data may not be published yet.',
-    );
+  const zoneCandidates = await findMPlusZonesForDungeon(token, run);
+  if (!zoneCandidates.length) {
+    return { success: false, reason: 'no_log_found' };
   }
 
-  const charData = await gqlQuery<CharMPlusResult>(token, MPLUS_CHAR_QUERY, {
+  const charQuery = buildMPlusCharacterQuery(zoneCandidates);
+  const charData = await gqlQuery<CharMPlusResult>(token, charQuery, {
     name: characterName,
     serverSlug,
     serverRegion,
-    zoneID,
   });
-  console.log('WCL M+ Rankings:', JSON.stringify(charData, null, 2));
 
   const character = charData.characterData?.character;
   if (!character) {
@@ -525,75 +732,67 @@ export async function fetchRunMetrics(
     );
   }
 
-  const rankings = character.mPlusRankings?.rankings ?? [];
+  const aliases = buildDungeonAliases(run);
+  const rankingCandidates: MPlusRankingCandidate[] = [];
 
-  // ── Diagnostic output ─────────────────────────────────────────────────
-  console.log('[PUG Vetting] Attempting to match RIO run:', run.dungeon, 'Level:', run.mythic_level);
-  console.log('[PUG Vetting] WCL returned', rankings.length, 'M+ ranking entries:');
-  rankings.forEach((r) =>
-    console.log(
-      `  encounter=[${r.encounter.id}] "${r.encounter.name}"`,
-      r.report?.code ? `reportCode=${r.report.code} fightID=${r.report.fightID}` : 'NO REPORT',
-    ),
-  );
-  // ─────────────────────────────────────────────────────────────────
+  zoneCandidates.forEach((candidate, candidateIndex) => {
+    [1, 2, 3].forEach((partition) => {
+      const alias = `z${candidateIndex}p${partition}`;
+      const result = character[alias] as WCLZoneRankings | null | undefined;
+      const rankings = result?.rankings ?? [];
 
-  if (!rankings.length) {
-    throw new Error(
-      'No Mythic+ logs found for this character. ' +
-      'Make sure their runs have been logged to Warcraft Logs.',
-    );
-  }
+      rankings.forEach((ranking) => {
+        if (!ranking.report?.code) return;
+        const nameScore = dungeonNameScore(aliases, ranking.encounter.name);
+        if (nameScore < 20) return;
 
-  // Normalised fuzzy-match: strip punctuation so e.g.
-  // "Tazavesh: Streets of Wonder" ≡ "tazavesh streets of wonder"
-  const targetNorm = normalize(run.dungeon);
-  console.log('[PUG Vetting] Normalized target:', targetNorm);
-
-  const matched = rankings.find((r) => {
-    const wclNorm = normalize(r.encounter.name);
-    const hit = wclNorm === targetNorm || wclNorm.includes(targetNorm) || targetNorm.includes(wclNorm);
-    console.log(`  compare "${wclNorm}" vs "${targetNorm}" → ${hit ? 'MATCH ✓' : 'no'}`);
-    return hit;
+        rankingCandidates.push({
+          encounterName: ranking.encounter.name,
+          reportCode: ranking.report.code,
+          fightID: ranking.report.fightID,
+          zoneID: candidate.zoneID,
+          zoneName: candidate.zoneName,
+          partition,
+          totalKills: ranking.totalKills ?? 0,
+          nameScore,
+        });
+      });
+    });
   });
 
+  const matched = pickBestRankingCandidate(rankingCandidates, run);
   if (!matched) {
-    throw new Error(
-      `No dungeon ranking found for "${run.dungeon}" in the M+ season zone. ` +
-      'Check DevTools console for the full list of WCL encounter names.',
-    );
+    return { success: false, reason: 'no_log_found' };
   }
-  if (!matched.report?.code) {
-    throw new Error(
-      `Found "${matched.encounter.name}" on WCL but it has no linked report. ` +
-      `+${run.mythic_level} run may not have been logged to Warcraft Logs.`,
-    );
-  }
-
-  const { code, fightID } = matched.report;
 
   // ── Step B ──────────────────────────────────────────────────────────────────
+  const fightWindow = await fetchFightWindow(token, matched.reportCode, matched.fightID);
+  if (!fightWindow) {
+    return { success: false, reason: 'no_log_found' };
+  }
+
   const tables = await gqlQuery<ReportTablesResult>(token, REPORT_TABLES_QUERY, {
-    code,
-    fightID,
+    code: matched.reportCode,
+    fightID: matched.fightID,
+    startTime: fightWindow.startTime,
+    endTime: fightWindow.endTime,
   });
-  console.log('WCL Report Tables:', JSON.stringify(tables, null, 2));
 
   const report = tables.reportData?.report;
   if (!report) {
-    throw new Error(`Report "${code}" could not be fetched from Warcraft Logs.`);
+    return { success: false, reason: 'no_log_found' };
   }
 
-  // Extract character-specific totals (case-insensitive name match)
-  const findEntry = (table: WCLTableScalar): WCLTableEntry | undefined =>
-    (table.data?.entries ?? []).find(
-      (e) => e.name.toLowerCase() === characterName.toLowerCase(),
-    );
-
   return {
-    interrupts:           findEntry(report.interrupts)?.total   ?? 0,
-    cc:                   null,  // Phase 3: requires spell-ID event filtering
-    avoidableDamageTaken: findEntry(report.damageTaken)?.total  ?? 0,
-    deaths:               findEntry(report.deaths)?.total       ?? 0,
+    success: true,
+    reportCode: matched.reportCode,
+    fightID: matched.fightID,
+    matchedDungeon: matched.encounterName,
+    metrics: {
+      interrupts: extractTableTotal(report.interrupts, characterName),
+      cc: extractCrowdControlTotal(report.casts, characterName),
+      avoidableDamageTaken: extractTableTotal(report.damageTaken, characterName),
+      deaths: extractTableTotal(report.deaths, characterName),
+    },
   };
 }
