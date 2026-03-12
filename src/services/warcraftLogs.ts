@@ -373,9 +373,6 @@ interface ReportTablesResult {
   reportData: {
     report: {
       interrupts:   WCLTableScalar;
-      deaths:       WCLTableScalar;
-      damageTaken:  WCLTableScalar;
-      casts:        WCLTableScalar;
     } | null;
   };
 }
@@ -552,25 +549,6 @@ const REPORT_TABLES_QUERY = /* GraphQL */ `
           startTime: $startTime
           endTime: $endTime
           dataType: Interrupts
-        )
-        deaths: table(
-          fightIDs: [$fightID]
-          startTime: $startTime
-          endTime: $endTime
-          dataType: Deaths
-        )
-        damageTaken: table(
-          fightIDs: [$fightID]
-          startTime: $startTime
-          endTime: $endTime
-          dataType: DamageTaken
-          filterExpression: ""
-        )
-        casts: table(
-          fightIDs: [$fightID]
-          startTime: $startTime
-          endTime: $endTime
-          dataType: Casts
         )
       }
     }
@@ -794,7 +772,8 @@ export async function fetchRunMetrics(
       endTime: relativeEnd,
     });
     report = tables.reportData?.report ?? null;
-  } catch {
+  } catch (error) {
+    console.error('[PUG Vetting] WCL interrupts query failed', error);
     report = null;
   }
 
@@ -804,11 +783,11 @@ export async function fetchRunMetrics(
       reportCode: matched.reportCode,
       fightID: matched.fightID,
       matchedDungeon: matched.encounterName,
-      metrics: {
-        interrupts: 0,
-        cc: 0,
-        avoidableDamageTaken: 0,
-        deaths: 0,
+    metrics: {
+      interrupts: 0,
+      cc: 0,
+      avoidableDamageTaken: 0,
+      deaths: 0,
       },
     };
   }
@@ -828,9 +807,9 @@ export async function fetchRunMetrics(
     matchedDungeon: matched.encounterName,
     metrics: {
       interrupts: safeExtractNumber(() => extractTableTotal(report.interrupts, characterName)),
-      cc: safeExtractNumber(() => extractCrowdControlTotal(report.casts, characterName)),
-      avoidableDamageTaken: safeExtractNumber(() => extractTableTotal(report.damageTaken, characterName)),
-      deaths: safeExtractNumber(() => extractTableTotal(report.deaths, characterName)),
+      cc: 0,
+      avoidableDamageTaken: 0,
+      deaths: 0,
     },
   };
 }
