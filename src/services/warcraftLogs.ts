@@ -406,6 +406,10 @@ interface MPlusZoneCandidate {
   nameScore: number;
 }
 
+const DUNGEON_FALLBACK_ALIASES: Record<string, string[]> = {
+  'halls of atonement': ['lord chamberlain', 'echelon', 'high adjudicator aleez', 'halkias'],
+};
+
 function normalize(s: string): string {
   return s.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -435,6 +439,11 @@ function buildDungeonAliases(run: RaiderIOBestRun): string[] {
       aliases.add(part);
       aliases.add(stripLeadingArticles(part));
     }
+  }
+
+  const dungeonKey = normalize(run.dungeon);
+  for (const fallback of DUNGEON_FALLBACK_ALIASES[dungeonKey] ?? []) {
+    aliases.add(normalize(fallback));
   }
 
   return Array.from(aliases).filter(Boolean);
@@ -483,6 +492,7 @@ async function findMPlusZonesForDungeon(
 
   const candidates: MPlusZoneCandidate[] = [];
   for (const zone of mPlusZones) {
+    const zoneNameScore = dungeonNameScore(aliases, zone.name);
     const bestEncounter = zone.encounters
       .map((enc) => ({
         enc,
@@ -490,12 +500,13 @@ async function findMPlusZonesForDungeon(
       }))
       .sort((a, b) => b.score - a.score)[0];
 
-    if (bestEncounter && bestEncounter.score >= 20) {
+    const bestScore = Math.max(zoneNameScore, bestEncounter?.score ?? 0);
+    if (bestScore >= 20) {
       candidates.push({
         zoneID: zone.id,
         zoneName: zone.name,
-        matchedEncounterName: bestEncounter.enc.name,
-        nameScore: bestEncounter.score,
+        matchedEncounterName: bestEncounter?.enc.name ?? zone.name,
+        nameScore: bestScore,
       });
     }
   }
@@ -533,7 +544,7 @@ function buildMPlusCharacterQuery(candidates: MPlusZoneCandidate[]): string {
 }
 
 const REPORT_TABLES_QUERY = /* GraphQL */ `
-  query($code: String!, $fightID: Int!, $startTime: Float!, $endTime: Float!) {
+  query($code: String!, $fightID: Int!, $startTime: Int!, $endTime: Int!) {
     reportData {
       report(code: $code) {
         interrupts: table(
@@ -553,7 +564,7 @@ const REPORT_TABLES_QUERY = /* GraphQL */ `
           startTime: $startTime
           endTime: $endTime
           dataType: DamageTaken
-          filterExpression: "ability.id != 1"
+          filterExpression: ""
         )
         casts: table(
           fightIDs: [$fightID]
@@ -771,20 +782,44 @@ export async function fetchRunMetrics(
     return { success: false, reason: 'no_log_found' };
   }
 
-  const startTime = Math.floor(fightWindow.startTime) - 10;
-  const endTime = Math.floor(fightWindow.endTime) + 10;
+  const relativeStart = 0;
+  const relativeEnd = Math.floor(run.clear_time_ms / 1000) * 1000 + 1000;
 
-  const tables = await gqlQuery<ReportTablesResult>(token, REPORT_TABLES_QUERY, {
-    code: matched.reportCode,
-    fightID: matched.fightID,
-    startTime,
-    endTime,
-  });
-
-  const report = tables.reportData?.report;
-  if (!report) {
-    return { success: false, reason: 'no_log_found' };
+  let report: ReportTablesResult['reportData']['report'] | null = null;
+  try {
+    const tables = await gqlQuery<ReportTablesResult>(token, REPORT_TABLES_QUERY, {
+      code: matched.reportCode,
+      fightID: matched.fightID,
+      startTime: 0,
+      endTime: relativeEnd,
+    });
+    report = tables.reportData?.report ?? null;
+  } catch {
+    report = null;
   }
+
+  if (!report) {
+    return {
+      success: true,
+      reportCode: matched.reportCode,
+      fightID: matched.fightID,
+      matchedDungeon: matched.encounterName,
+      metrics: {
+        interrupts: 0,
+        cc: 0,
+        avoidableDamageTaken: 0,
+        deaths: 0,
+      },
+    };
+  }
+
+  const safeExtractNumber = (extractor: () => number | null): number => {
+    try {
+      return extractor() ?? 0;
+    } catch {
+      return 0;
+    }
+  };
 
   return {
     success: true,
@@ -792,10 +827,10 @@ export async function fetchRunMetrics(
     fightID: matched.fightID,
     matchedDungeon: matched.encounterName,
     metrics: {
-      interrupts: extractTableTotal(report.interrupts, characterName),
-      cc: extractCrowdControlTotal(report.casts, characterName),
-      avoidableDamageTaken: extractTableTotal(report.damageTaken, characterName),
-      deaths: extractTableTotal(report.deaths, characterName),
+      interrupts: safeExtractNumber(() => extractTableTotal(report.interrupts, characterName)),
+      cc: safeExtractNumber(() => extractCrowdControlTotal(report.casts, characterName)),
+      avoidableDamageTaken: safeExtractNumber(() => extractTableTotal(report.damageTaken, characterName)),
+      deaths: safeExtractNumber(() => extractTableTotal(report.deaths, characterName)),
     },
   };
 }
