@@ -755,61 +755,55 @@ export async function fetchRunMetrics(
   }
 
   // ── Step B ──────────────────────────────────────────────────────────────────
-  const fightWindow = await fetchFightWindow(token, matched.reportCode, matched.fightID);
-  if (!fightWindow) {
-    return { success: false, reason: 'no_log_found' };
-  }
-
-  const relativeStart = 0;
-  const relativeEnd = Math.floor(run.clear_time_ms / 1000) * 1000 + 1000;
-
-  let report: ReportTablesResult['reportData']['report'] | null = null;
   try {
+    const fightWindow = await fetchFightWindow(token, matched.reportCode, matched.fightID);
+    if (!fightWindow) {
+      throw new Error('Fight window unavailable');
+    }
+
+    const relativeStart = 0;
+    const relativeEnd = Math.floor(run.clear_time_ms / 1000) * 1000 + 1000;
+
     const tables = await gqlQuery<ReportTablesResult>(token, REPORT_TABLES_QUERY, {
       code: matched.reportCode,
       fightID: matched.fightID,
-      startTime: 0,
+      startTime: relativeStart,
       endTime: relativeEnd,
     });
-    report = tables.reportData?.report ?? null;
-  } catch (error) {
-    console.error('[PUG Vetting] WCL interrupts query failed', error);
-    report = null;
-  }
+    const report = tables.reportData?.report;
 
-  if (!report) {
+    if (!report) {
+      throw new Error('Report tables unavailable');
+    }
+
+    const safeExtractNumber = (extractor: () => number | null): number => {
+      try {
+        return extractor() ?? 0;
+      } catch {
+        return 0;
+      }
+    };
+
     return {
       success: true,
       reportCode: matched.reportCode,
       fightID: matched.fightID,
       matchedDungeon: matched.encounterName,
-    metrics: {
-      interrupts: 0,
-      cc: 0,
-      avoidableDamageTaken: 0,
-      deaths: 0,
+      metrics: {
+        interrupts: safeExtractNumber(() => extractTableTotal(report.interrupts, characterName)),
+        cc: 0,
+        avoidableDamageTaken: 0,
+        deaths: 0,
       },
     };
+  } catch (error) {
+    console.error('[PUG Vetting] Step B failed', error);
+    return {
+      success: true,
+      reportCode: matched.reportCode,
+      fightID: matched.fightID,
+      matchedDungeon: matched.encounterName,
+      metrics: { interrupts: 0, cc: 0, avoidableDamageTaken: 0, deaths: 0 },
+    };
   }
-
-  const safeExtractNumber = (extractor: () => number | null): number => {
-    try {
-      return extractor() ?? 0;
-    } catch {
-      return 0;
-    }
-  };
-
-  return {
-    success: true,
-    reportCode: matched.reportCode,
-    fightID: matched.fightID,
-    matchedDungeon: matched.encounterName,
-    metrics: {
-      interrupts: safeExtractNumber(() => extractTableTotal(report.interrupts, characterName)),
-      cc: 0,
-      avoidableDamageTaken: 0,
-      deaths: 0,
-    },
-  };
 }
