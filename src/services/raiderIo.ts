@@ -3,8 +3,9 @@ import type { RaiderIOProfile, RaiderIOBestRun, RaiderIOData, Region } from '../
 const BASE_URL = 'https://raider.io/api/v1';
 
 function toRealmSlug(realm: string): string {
-  return realm.trim().toLowerCase().replace(/\s+/g, '-');
+  return realm.trim().toLowerCase().replace(/'/g, '').replace(/\s+/g, '-');
 }
+
 
 async function raiderIOFetch(
   name: string,
