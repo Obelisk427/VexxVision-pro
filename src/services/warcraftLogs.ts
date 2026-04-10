@@ -3,9 +3,14 @@ import type { Region, WCLRaidData, WCLBothTiersData, ProcessedBossData, PugVetti
 const WCL_TOKEN_URL = 'https://www.warcraftlogs.com/oauth/token';
 const WCL_GQL_URL = 'https://www.warcraftlogs.com/api/v2/client';
 
-// ─── Auth ────────────────────────────────────────────────────────────────────
+// In production, VITE_ env vars are empty (secrets stay server-side).
+// We detect this and route through /api/wcl instead.
+const useProxy = !import.meta.env.VITE_WCL_CLIENT_ID;
+
+// ─── Auth (local dev only) ───────────────────────────────────────────────────
 
 async function fetchWCLToken(): Promise<string> {
+  if (useProxy) return ''; // token handled server-side
   const clientId = import.meta.env.VITE_WCL_CLIENT_ID;
   const clientSecret = import.meta.env.VITE_WCL_CLIENT_SECRET;
   const credentials = btoa(`${clientId}:${clientSecret}`);
@@ -18,14 +23,28 @@ async function fetchWCLToken(): Promise<string> {
   return json.access_token;
 }
 
+// ─── GraphQL (auto-routes: proxy in prod, direct in dev) ─────────────────────
+
 async function gqlQuery<T>(token: string, query: string, variables?: Record<string, unknown>): Promise<T> {
-  const response = await fetch(WCL_GQL_URL, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, variables }),
-  });
+  let response: Response;
+
+  if (useProxy) {
+    response = await fetch('/api/wcl', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, variables }),
+    });
+  } else {
+    response = await fetch(WCL_GQL_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, variables }),
+    });
+  }
+
   const json = await response.json();
   if (json.errors) throw new Error(json.errors[0].message);
+  if (json.error) throw new Error(json.error);
   return json.data;
 }
 
@@ -110,7 +129,7 @@ async function discoverRaidZones(token: string): Promise<{ current: number; prev
     previous: raidZones[1]?.id ?? raidZones[0].id,
   };
 
-  console.log(`[VexxVision] Dynamic zone discovery → current: ${result.current} (${raidZones[0].name}), previous: ${result.previous} (${raidZones[1]?.name ?? 'same'})`);
+  console.log(`[TactixVision] Dynamic zone discovery → current: ${result.current} (${raidZones[0].name}), previous: ${result.previous} (${raidZones[1]?.name ?? 'same'})`);
 
   _zoneCache = result;
   return result;
@@ -193,19 +212,6 @@ export async function fetchWCLData(name: string, realm: string, region: Region):
 }
 
 // ─── PUG Vetting Support ────────────────────────────────────────────────────
-//
-// Metrics pulled per run:
-//   1. Interrupts — raw count of successful kicks
-//   2. DPS — damage done / fight duration
-//   3. Damage Taken (relative) — tank-aware comparison vs group
-//   4. Deaths — count of death events
-//
-// Strategy:
-//   1. Find WCL encounter ID for the dungeon
-//   2. Use encounterRankings (difficulty 10 = M+) to get report code
-//   3. Fetch fight list to get real startTime/endTime
-//   4. Query metrics tables using the fight's actual time window
-// ─────────────────────────────────────────────────────────────────────────────
 
 export async function fetchRunMetrics(characterName: string, realm: string, region: Region, run: RaiderIOBestRun): Promise<PugVettingResult> {
   const token = await fetchWCLToken();
@@ -320,16 +326,9 @@ export async function fetchRunMetrics(characterName: string, realm: string, regi
     const fightDurationSec = (fightEnd - fightStart) / 1000;
 
     // ── Extract interrupts ──────────────────────────────────────────────────
-    // WCL Interrupts table nesting:
-    //   entries[0]              → anonymous wrapper
-    //     .entries[i]           → enemy ability (e.g. "Holy Bolt")
-    //       .details[j]        → player who interrupted it
-    //         .name / .total   → player name and count
-    // We unwrap, then sum across all abilities for the target character.
     const extractInterrupts = (tab: any): number => {
       if (!tab?.data?.entries) return 0;
       let total = 0;
-      // Unwrap: if top-level entries have a nested .entries array, go one level deeper
       let abilityList: any[] = tab.data.entries;
       if (abilityList.length > 0 && abilityList[0].entries && !abilityList[0].name) {
         abilityList = abilityList[0].entries;
@@ -369,7 +368,6 @@ export async function fetchRunMetrics(characterName: string, realm: string, regi
       }
     }
 
-    // Identify the tank as the player with the highest damage taken
     const sortedByDmg = [...playerDamages].sort((a, b) => b.total - a.total);
     const tankName = sortedByDmg.length > 0 ? sortedByDmg[0].name : null;
     const isTank = tankName ? normalize(tankName) === charNorm : false;
@@ -378,18 +376,15 @@ export async function fetchRunMetrics(characterName: string, realm: string, regi
 
     if (playerDamages.length > 0) {
       if (isTank) {
-        // Tank: show as percentage of total group damage
         const totalGroupDmg = playerDamages.reduce((sum, p) => sum + p.total, 0);
         damageTakenPercent = totalGroupDmg > 0 ? Math.round((charDamageTaken / totalGroupDmg) * 100) : 0;
       } else {
-        // Non-tank: compare against non-tank average
         const nonTankPlayers = playerDamages.filter(
           (p) => !tankName || normalize(p.name) !== normalize(tankName)
         );
         const nonTankAvg = nonTankPlayers.length > 0
           ? nonTankPlayers.reduce((sum, p) => sum + p.total, 0) / nonTankPlayers.length
           : 0;
-        // Positive = above average (bad), negative = below average (good)
         damageTakenPercent = nonTankAvg > 0 ? Math.round(((charDamageTaken - nonTankAvg) / nonTankAvg) * 100) : 0;
       }
     }
