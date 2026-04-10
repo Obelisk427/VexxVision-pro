@@ -28,7 +28,7 @@ function AppLogo({ className }: { className?: string }) {
     return (
       <img
         src="/vexx-logo.png"
-        alt="VexxVision"
+        alt="TactixVision"
         className={`object-cover aspect-square ${className ?? ''}`}
         onError={() => setImgFailed(true)}
       />
@@ -135,7 +135,7 @@ export function Dashboard() {
           >
             <AppLogo className="w-8 h-8 rounded-lg shadow-lg shadow-purple-500/20 group-hover:brightness-110 transition" />
             <span className="font-bold text-white text-base tracking-tight hidden sm:block">
-              VexxVision
+              TactixVision
             </span>
           </a>
 
@@ -162,7 +162,7 @@ export function Dashboard() {
             <div className="space-y-3">
               <h1 className="text-4xl sm:text-5xl font-black text-white tracking-tight">
                 <span className="bg-gradient-to-r from-accent-violet to-accent-teal bg-clip-text text-transparent">
-                  VexxVision
+                  TactixVision
                 </span>
               </h1>
               <p className="text-slate-400 text-lg max-w-xl italic">
@@ -225,7 +225,7 @@ export function Dashboard() {
       <footer className="mt-16 border-t border-white/5 py-6">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 text-center text-xs text-slate-700 space-y-1">
           <p>Data provided by Raider.io and Warcraft Logs. Not affiliated with Blizzard Entertainment.</p>
-          <p>VexxVision · Streamer Toolkit</p>
+          <p>TactixVision · Streamer Toolkit</p>
         </div>
       </footer>
     </div>

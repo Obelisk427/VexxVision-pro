@@ -10,60 +10,37 @@ interface PugVettingModalProps {
   onClose: () => void;
 }
 
-interface MetricCard {
-  key: keyof PugVettingMetrics;
-  label: string;
-  sublabel: string;
-  icon: string;
-  accentClass: string;
-  glowClass: string;
-  /** Optional formatter for the value */
-  format?: (v: number) => string;
-}
-
-const METRIC_CARDS: MetricCard[] = [
-  {
-    key: 'interrupts',
-    label: 'Interrupts',
-    sublabel: 'Successful kicks',
-    icon: '⚡',
-    accentClass: 'text-teal-400',
-    glowClass: 'shadow-teal-500/20',
-  },
-  {
-    key: 'cc',
-    label: 'CC & Utility',
-    sublabel: 'Phase 3 — spell filter',
-    icon: '🔒',
-    accentClass: 'text-purple-400',
-    glowClass: 'shadow-purple-500/20',
-  },
-  {
-    key: 'avoidableDamageTaken',
-    label: 'Avoidable Damage',
-    sublabel: 'Damage from failed mechanics',
-    icon: '⚠️',
-    accentClass: 'text-orange-400',
-    glowClass: 'shadow-orange-500/20',
-    format: (v) => {
-      if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-      if (v >= 1_000)     return `${(v / 1_000).toFixed(0)}K`;
-      return v.toString();
-    },
-  },
-  {
-    key: 'deaths',
-    label: 'Total Deaths',
-    sublabel: 'Count across the run',
-    icon: '💀',
-    accentClass: 'text-red-400',
-    glowClass: 'shadow-red-500/20',
-  },
-];
-
 function formatClearTime(ms: number): string {
   const totalSec = Math.floor(ms / 1000);
   return `${Math.floor(totalSec / 60)}:${(totalSec % 60).toString().padStart(2, '0')}`;
+}
+
+function formatDps(dps: number): string {
+  if (dps >= 1_000_000) return `${(dps / 1_000_000).toFixed(1)}M`;
+  if (dps >= 1_000) return `${(dps / 1_000).toFixed(1)}K`;
+  return dps.toString();
+}
+
+function formatDamageRaw(dmg: number): string {
+  if (dmg >= 1_000_000) return `${(dmg / 1_000_000).toFixed(1)}M`;
+  if (dmg >= 1_000) return `${(dmg / 1_000).toFixed(0)}K`;
+  return dmg.toString();
+}
+
+/** Returns color class and label for the relative damage metric. */
+function getDamageContext(percent: number | null, isTank: boolean): { color: string; label: string } {
+  if (percent === null) return { color: 'text-slate-500', label: 'N/A' };
+
+  if (isTank) {
+    // Tank: showing % of group damage. 35-55% is normal.
+    return { color: 'text-blue-400', label: `${percent}% of group` };
+  }
+
+  // Non-tank: positive = above avg (bad), negative = below avg (good)
+  if (percent <= -15) return { color: 'text-green-400', label: `${percent}% vs avg` };
+  if (percent <= 5) return { color: 'text-slate-300', label: `${percent > 0 ? '+' : ''}${percent}% vs avg` };
+  if (percent <= 20) return { color: 'text-orange-400', label: `+${percent}% vs avg` };
+  return { color: 'text-red-400', label: `+${percent}% vs avg` };
 }
 
 /** Pulsing placeholder shown while loading */
@@ -114,13 +91,7 @@ export function PugVettingModal({
     return () => { cancelled = true; };
   }, [characterName, realm, region, run]);
 
-  const displayValue = (card: MetricCard): string | null => {
-    if (loading)  return null;  // render skeleton
-    if (!metrics) return '---';
-    const raw = metrics[card.key];
-    if (raw === null) return '---';
-    return card.format ? card.format(raw) : raw.toString();
-  };
+  const dmgCtx = metrics ? getDamageContext(metrics.damageTakenPercent, metrics.isTank) : null;
 
   return (
     /* ── Backdrop ─────────────────────────────────────────────────────── */
@@ -145,9 +116,9 @@ export function PugVettingModal({
         <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-white/5">
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <span className="text-teal-400 text-lg">🔍</span>
+              <span className="text-teal-400 text-lg">⚖️</span>
               <h2 id="vetting-title" className="text-white font-bold text-lg">
-                PUG Vetting Report
+                Are They Worthy?
               </h2>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-widest bg-teal-500/10 text-teal-400 border border-teal-500/20">
                 {loading ? 'Fetching…' : error ? 'Error' : noLogFound ? 'No Log' : 'Live Data'}
@@ -216,28 +187,66 @@ export function PugVettingModal({
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-3 p-6">
-            {METRIC_CARDS.map((card) => {
-              const value = displayValue(card);
 
-              return (
-                <div
-                  key={card.key}
-                  className={`relative flex flex-col items-center gap-3 rounded-xl border border-white/5 bg-white/[0.03] px-4 py-5 text-center shadow-lg ${card.glowClass} overflow-hidden`}
-                >
-                  <div className="absolute top-0 right-0 w-16 h-16 bg-white/[0.015] rounded-bl-full" />
-                  <span className="text-2xl leading-none">{card.icon}</span>
+            {/* ── Interrupts ─────────────────────────────────────────── */}
+            <div className="relative flex flex-col items-center gap-3 rounded-xl border border-white/5 bg-white/[0.03] px-4 py-5 text-center shadow-lg shadow-teal-500/20 overflow-hidden">
+              <div className="absolute top-0 right-0 w-16 h-16 bg-white/[0.015] rounded-bl-full" />
+              <span className="text-2xl leading-none">⚡</span>
+              <div className="text-3xl font-black tracking-tight tabular-nums text-teal-400">
+                {loading ? <MetricSkeleton /> : (metrics?.interrupts ?? 0)}
+              </div>
+              <div className="space-y-0.5">
+                <div className="text-xs font-semibold text-slate-300">Interrupts</div>
+                <div className="text-[10px] text-slate-600">Successful kicks</div>
+              </div>
+            </div>
 
-                  <div className={`text-3xl font-black tracking-tight tabular-nums ${card.accentClass}`}>
-                    {loading ? <MetricSkeleton /> : value ?? '---'}
-                  </div>
+            {/* ── DPS ────────────────────────────────────────────────── */}
+            <div className="relative flex flex-col items-center gap-3 rounded-xl border border-white/5 bg-white/[0.03] px-4 py-5 text-center shadow-lg shadow-purple-500/20 overflow-hidden">
+              <div className="absolute top-0 right-0 w-16 h-16 bg-white/[0.015] rounded-bl-full" />
+              <span className="text-2xl leading-none">⚔️</span>
+              <div className="text-3xl font-black tracking-tight tabular-nums text-purple-400">
+                {loading ? <MetricSkeleton /> : formatDps(metrics?.dps ?? 0)}
+              </div>
+              <div className="space-y-0.5">
+                <div className="text-xs font-semibold text-slate-300">DPS Output</div>
+                <div className="text-[10px] text-slate-600">Damage per second</div>
+              </div>
+            </div>
 
-                  <div className="space-y-0.5">
-                    <div className="text-xs font-semibold text-slate-300">{card.label}</div>
-                    <div className="text-[10px] text-slate-600">{card.sublabel}</div>
-                  </div>
+            {/* ── Damage Taken (Relative) ────────────────────────────── */}
+            <div className="relative flex flex-col items-center gap-3 rounded-xl border border-white/5 bg-white/[0.03] px-4 py-5 text-center shadow-lg shadow-orange-500/20 overflow-hidden">
+              <div className="absolute top-0 right-0 w-16 h-16 bg-white/[0.015] rounded-bl-full" />
+              <span className="text-2xl leading-none">🛡️</span>
+              <div className={`text-2xl font-black tracking-tight tabular-nums ${loading ? '' : dmgCtx?.color ?? 'text-slate-500'}`}>
+                {loading ? <MetricSkeleton /> : dmgCtx?.label ?? 'N/A'}
+              </div>
+              <div className="space-y-0.5">
+                <div className="text-xs font-semibold text-slate-300">Damage Taken</div>
+                <div className="text-[10px] text-slate-600">
+                  {loading
+                    ? 'Analyzing…'
+                    : metrics?.isTank
+                      ? `Tank · ${formatDamageRaw(metrics?.damageTakenRaw ?? 0)} total`
+                      : `${formatDamageRaw(metrics?.damageTakenRaw ?? 0)} total`
+                  }
                 </div>
-              );
-            })}
+              </div>
+            </div>
+
+            {/* ── Deaths ─────────────────────────────────────────────── */}
+            <div className="relative flex flex-col items-center gap-3 rounded-xl border border-white/5 bg-white/[0.03] px-4 py-5 text-center shadow-lg shadow-red-500/20 overflow-hidden">
+              <div className="absolute top-0 right-0 w-16 h-16 bg-white/[0.015] rounded-bl-full" />
+              <span className="text-2xl leading-none">💀</span>
+              <div className="text-3xl font-black tracking-tight tabular-nums text-red-400">
+                {loading ? <MetricSkeleton /> : (metrics?.deaths ?? 0)}
+              </div>
+              <div className="space-y-0.5">
+                <div className="text-xs font-semibold text-slate-300">Deaths</div>
+                <div className="text-[10px] text-slate-600">Count across the run</div>
+              </div>
+            </div>
+
           </div>
         )}
 
@@ -251,7 +260,7 @@ export function PugVettingModal({
                   ? 'Querying Warcraft Logs…'
                   : noLogFound
                     ? 'No uploaded Warcraft Logs report could be matched to this Raider.io run.'
-                    : 'Metrics are fetched from the best-logged run matching this dungeon on Warcraft Logs.'}
+                    : 'Metrics from the best-logged run. Damage comparison excludes the tank for non-tank players.'}
               </p>
             </div>
           </div>

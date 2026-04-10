@@ -47,12 +47,10 @@ export function MythicPlusPanel({ state, tier }: MythicPlusPanelProps) {
 
   const { profile, currentRuns, previousRuns } = state.data;
 
-  // seasons[0] = current, seasons[1] = previous
   const seasons = profile.mythic_plus_scores_by_season ?? [];
   const seasonData = tier === 'current' ? seasons[0] ?? null : seasons[1] ?? null;
   const overallScore = seasonData?.scores?.all ?? 0;
 
-  // Runs: use the pre-fetched correct array for each tier
   const runs = tier === 'current' ? currentRuns : previousRuns;
   const noPreviousScore = tier === 'previous' && !seasonData;
 
@@ -79,7 +77,6 @@ export function MythicPlusPanel({ state, tier }: MythicPlusPanelProps) {
           No previous season data available for this character.
         </div>
       ) : (
-        /* ── Score display ──────────────────────────────────────── */
         <div className="flex items-center gap-4">
           <div className={`text-5xl font-black tracking-tight tabular-nums ${getScoreColorClass(overallScore)}`}>
             {overallScore > 0 ? overallScore.toFixed(1) : '—'}
@@ -126,22 +123,15 @@ export function MythicPlusPanel({ state, tier }: MythicPlusPanelProps) {
               </tr>
             </thead>
             <tbody>
-              {runs.map((run, i) => {
-                console.log('Raw Run Data:', run);
-                // Raider.io incorrectly tags TWW S3 historical runs with season-mn-1
-                // in their native url field during the expansion transition window.
-                const fixedUrl = run.url
-                  ? run.url.replace('season-mn-1', 'season-tww-3')
-                  : null;
-                return (
+              {runs.map((run, i) => (
                 <tr
                   key={i}
                   className="border-t border-white/[0.04] hover:bg-white/[0.02] transition-colors"
                 >
                   <td className="py-2.5 pl-1 text-slate-200 font-medium">
-                    {fixedUrl ? (
+                    {run.url ? (
                       <a
-                        href={fixedUrl}
+                        href={run.url}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="hover:text-accent-teal hover:underline underline-offset-2 transition-colors"
@@ -172,20 +162,20 @@ export function MythicPlusPanel({ state, tier }: MythicPlusPanelProps) {
                     <button
                       id={`analyze-run-${i}`}
                       onClick={() => setSelectedRun(run)}
-                      aria-label={`Analyze ${run.dungeon} +${run.mythic_level}`}
-                      title="PUG Vetting Report"
+                      aria-label={`Judge ${run.dungeon} +${run.mythic_level}`}
+                      title="Are They Worthy?"
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-slate-500 border border-white/5 bg-white/[0.03] hover:text-accent-teal hover:border-accent-teal/40 hover:bg-accent-teal/5 hover:shadow-[0_0_10px_rgba(20,184,166,0.15)] transition-all"
                     >
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="11" cy="11" r="8" />
-                        <path d="m21 21-4.35-4.35" />
+                        <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                        <path d="M2 17l10 5 10-5" />
+                        <path d="M2 12l10 5 10-5" />
                       </svg>
-                      Scan
+                      Judge
                     </button>
                   </td>
                 </tr>
-              ); })}
-
+              ))}
             </tbody>
           </table>
         </div>

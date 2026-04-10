@@ -167,10 +167,18 @@ export interface WCLBothTiersData {
 export interface PugVettingMetrics {
   /** Total successful interrupts by this character in the run. */
   interrupts: number | null;
-  /** Crowd-control casts identified from the Casts table. */
-  cc: number | null;
-  /** Total damage taken from all sources (proxy for avoidable damage). */
-  avoidableDamageTaken: number | null;
+  /** DPS output (damage per second) for this character in the run. */
+  dps: number | null;
+  /**
+   * Damage taken context. For non-tanks: percentage above/below the non-tank
+   * average (negative = below avg = good). For tanks: percentage of total
+   * group damage taken.
+   */
+  damageTakenPercent: number | null;
+  /** Whether the character was the tank for this run. */
+  isTank: boolean;
+  /** Raw damage taken by this character. */
+  damageTakenRaw: number | null;
   /** Total deaths for this character in the run. */
   deaths: number | null;
 }
