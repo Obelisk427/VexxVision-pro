@@ -1,4 +1,4 @@
-import type { Region, WCLZone, WCLRaidData, WCLBothTiersData, ProcessedBossData, PugVettingResult, RaiderIOBestRun } from '../types';
+import type { Region, WCLRaidData, WCLBothTiersData, ProcessedBossData, PugVettingResult, RaiderIOBestRun } from '../types';
 
 const WCL_TOKEN_URL = 'https://www.warcraftlogs.com/oauth/token';
 const WCL_GQL_URL = 'https://www.warcraftlogs.com/api/v2/client';
@@ -344,7 +344,7 @@ export async function fetchRunMetrics(characterName: string, realm: string, regi
       }
       return total;
     };
-    
+
     // ── Extract DPS ─────────────────────────────────────────────────────────
     let charDps = 0;
     const dmgDoneEntries: any[] = report.damageDone?.data?.entries ?? [];
